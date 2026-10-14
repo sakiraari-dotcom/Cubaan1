@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ms">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pengurus Masjid</title>
+<style>
+:root{--bg:#0d1412;--card:#151c1a;--line:rgba(255,255,255,.12);--ink:#f4f1ea;--muted:rgba(244,241,234,.7);--accent:#e8c77a;--ok:#7fd1b9;--bad:#f2a07b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:760px;margin:0 auto;padding:20px 16px 120px}
+h1{font-size:24px;margin:4px 0 2px}
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+.kicker{font-size:13px;font-weight:700;letter-spacing:.08em;color:var(--accent)}
+.muted{color:var(--muted);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0}
+label.f{display:flex;flex-direction:column;gap:4px;margin:0 0 12px;font-size:14px;color:var(--muted)}
+input[type=text],input[type=number],input[type=time],input[type=password],select,textarea{width:100%;min-height:44px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0b100f;color:var(--ink);font:inherit}
+textarea{min-height:70px;resize:vertical}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row>*{flex:1 1 140px}
+.check{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:15px}
+.check input{width:22px;height:22px;accent-color:var(--accent)}
+button{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+button.primary{background:var(--accent);color:#14110a;border:none;font-weight:700}
+button.danger{color:var(--bad);border-color:rgba(242,160,123,.4)}
+.item{border:1px solid var(--line);border-radius:12px;padding:12px;margin:0 0 10px}
+.item-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.thumb{max-width:160px;max-height:100px;border-radius:8px;display:block;margin:6px 0}
+.bar{position:fixed;left:0;right:0;bottom:0;background:rgba(13,20,18,.96);border-top:1px solid var(--line);padding:12px 16px}
+.bar .in{max-width:760px;margin:0 auto;display:flex;gap:12px;align-items:center;justify-content:space-between}
+#toast{font-size:14px}
+.ar{font-family:"Noto Naskh Arabic","Traditional Arabic",serif;font-size:20px}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">PENGURUS MASJID</div>
+  <h1 id="title">Panel Pengurusan</h1>
+  <div class="muted" id="sub"></div>
+
+  <section id="login" class="card hidden">
+    <h2>Log masuk</h2>
+    <p class="muted">Masukkan PIN yang dipaparkan dalam Tetapan aplikasi di TV.</p>
+    <label class="f">PIN<input id="pin" type="password" inputmode="numeric" autocomplete="off"></label>
+    <button class="primary" id="loginBtn">Masuk</button>
+    <p id="loginErr" class="muted" style="color:var(--bad)"></p>
+  </section>
+
+  <div id="app" class="hidden"></div>
+</main>
+<div class="bar hidden" id="bar"><div class="in"><span id="toast" class="muted">Perubahan belum disimpan dihantar bila tekan Simpan.</span><button class="primary" id="saveBtn">Simpan &amp; hantar ke TV</button></div></div>
+
+<script>
+(function(){
+  var cfg = null, mode = 'rumah', role = 'utama', pin = '';
+  try { pin = localStorage.getItem('pin') || ''; } catch (e) {}
+
+  var $ = function(id){ return document.getElementById(id); };
+  function esc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({'X-Pin': pin}, opts.headers || {});
+    return fetch(path, opts).then(function(r){
+      if (r.status === 401) { showLogin('PIN salah.'); throw new Error('401'); }
+      return r.json().then(function(j){ if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    });
+  }
+
+  function showLogin(msg){
+    $('login').classList.remove('hidden');
+    $('app').classList.add('hidden');
+    $('bar').classList.add('hidden');
+    $('loginErr').textContent = msg || '';
+  }
+
+  function load(){
+    api('/api/config').then(function(j){
+      cfg = j.config; mode = j.mode || 'rumah'; role = j.role || 'utama';
+      $('sub').textContent = (j.zone ? j.zone + ' · ' + (j.zoneCode || '') : '');
+      $('login').classList.add('hidden');
+      $('app').classList.remove('hidden');
+      $('bar').classList.remove('hidden');
+      render();
+    }).catch(function(e){ if (e.message !== '401') showLogin('Tidak dapat sambung: ' + e.message); });
+  }
+
+  $('loginBtn').onclick = function(){
+    pin = $('pin').value.trim();
+    try { localStorage.setItem('pin', pin); } catch (e) {}
+    load();
+  };
+
+  // ---------- akses data mengikut laluan "a.b.0.c"
+  function getPath(p){ return p.split('.').reduce(function(o,k){ return o == null ? undefined : o[k]; }, cfg); }
+  function setPath(p, v){
+    var ks = p.split('.'), o = cfg;
+    for (var i = 0; i < ks.length - 1; i++) {
+      if (o[ks[i]] == null) o[ks[i]] = {};
+      o = o[ks[i]];
+    }
+    o[ks[ks.length - 1]] = v;
+  }
+
+  // ---------- pembina medan
+  function text(p, label, ph){ return '<label class="f">' + label + '<input type="text" data-path="' + p + '" value="' + esc(getPath(p)) + '" placeholder="' + esc(ph || '') + '"></label>'; }
+  function area(p, label, cls){ return '<label class="f">' + label + '<textarea data-path="' + p + '" class="' + (cls || '') + '"' + (cls === 'ar' ? ' dir="rtl"' : '') + '>' + esc(getPath(p)) + '</textarea></label>'; }
+  function num(p, label){ return '<label class="f">' + label + '<input type="number" min="0" max="120" data-path="' + p + '" data-type="num" value="' + esc(getPath(p)) + '"></label>'; }
+  function time(p, label){ return '<label class="f">' + label + '<input type="time" data-path="' + p + '" value="' + esc(getPath(p)) + '"></label>'; }
+  function check(p, label){ return '<label class="check">' + label + '<input type="checkbox" data-path="' + p + '" data-type="bool"' + (getPath(p) !== false ? ' checked' : '') + '></label>'; }
+  function media(p, label, accept){
+    var v = getPath(p), h = '<div class="f" style="margin-bottom:12px"><span class="muted">' + label + '</span>';
+    if (v) {
+      h += accept.indexOf('image') === 0 ? '<img class="thumb" src="/media/' + esc(v) + '" alt="">' : '<div class="muted">Fail: ' + esc(v) + '</div>';
+    }
+    h += '<div class="row"><button data-act="upload" data-path="' + p + '" data-accept="' + accept + '">' + (v ? 'Tukar fail' : 'Pilih fail') + '</button>';
+    if (v) h += '<button class="danger" data-act="clear" data-path="' + p + '">Buang</button>';
+    return h + '</div></div>';
+  }
+  function select(p, label, opts){
+    var v = getPath(p), h = '<label class="f">' + label + '<select data-path="' + p + '">';
+    opts.forEach(function(o){ h += '<option value="' + esc(o[0]) + '"' + (o[0] === v ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; });
+    return h + '</select></label>';
+  }
+  function head(title, list, i){
+    return '<div class="item-head"><strong>' + title + '</strong><div class="row" style="flex:0 0 auto">' +
+      '<button data-act="up" data-list="' + list + '" data-i="' + i + '" aria-label="Naik">↑</button>' +
+      '<button class="danger" data-act="del" data-list="' + list + '" data-i="' + i + '">Padam</button></div></div>';
+  }
+
+  function render(){
+    ['announcements','slides','verses'].forEach(function(k){ if (!Array.isArray(cfg[k])) cfg[k] = []; });
+    $('title').textContent = cfg.name || 'Panel Pengurusan';
+    var h = '';
+    if (role === 'pendua') h += '<div class="card" style="border-color:var(--bad)">TV ini ialah TV pendua. Perubahan di sini akan ditimpa oleh TV utama. Sila buka panel TV utama.</div>';
+
+    h += '<section class="card"><h2>Mod paparan</h2><div class="row">' +
+      '<label class="check"><span>Mod Masjid</span><input type="radio" name="mode" value="masjid"' + (mode === 'masjid' ? ' checked' : '') + '></label>' +
+      '<label class="check"><span>Mod Rumah</span><input type="radio" name="mode" value="rumah"' + (mode === 'rumah' ? ' checked' : '') + '></label></div></section>';
+
+    h += '<section class="card"><h2>Profil masjid</h2>' + text('name','Nama masjid') + text('locationText','Lokasi (kosongkan untuk guna zon auto)') +
+      select('accent','Warna utama',[['#E8C77A','Emas'],['#7FD1B9','Hijau pudina'],['#9EC5FF','Biru langit'],['#F2A07B','Jingga']]) +
+      media('logo','Logo masjid','image/*') + '</section>';
+
+    h += '<section class="card"><h2>Iqamah (minit selepas azan)</h2><div class="row">' +
+      num('iqamah.subuh','Subuh') + num('iqamah.zohor','Zohor') + num('iqamah.asar','Asar') + num('iqamah.maghrib','Maghrib') + num('iqamah.isyak','Isyak') +
+      '</div><div class="row">' + num('solatMinutes','Tempoh skrin gelap semasa solat') + num('khutbahMinutes','Jumaat: tempoh khutbah') + num('jumaatSolatMinutes','Jumaat: tempoh solat') + '</div></section>';
+
+    h += '<section class="card"><h2>Petugas</h2><div class="row">' + text('petugas.imamBertugas','Imam bertugas hari ini') + '</div><div class="row">' +
+      text('petugas.khatib','Khatib Jumaat') + text('petugas.imam','Imam Jumaat') + text('petugas.bilal','Bilal Jumaat') + '</div></section>';
+
+    h += '<section class="card"><h2>Derma</h2>' + text('tabung','Kutipan tabung Jumaat lalu','RM 0.00') + media('qr','Gambar QR DuitNow masjid','image/*') + '</section>';
+
+    h += '<section class="card"><h2>Pengumuman bergerak</h2>';
+    cfg.announcements.forEach(function(a,i){
+      h += '<div class="item">' + head('Pengumuman ' + (i+1),'announcements',i) + area('announcements.' + i + '.text','Teks') + check('announcements.' + i + '.active','Papar') + '</div>';
+    });
+    h += '<button data-act="add" data-list="announcements">+ Tambah pengumuman</button></section>';
+
+    h += '<section class="card"><h2>Slaid</h2><p class="muted">Jenis "Teks" untuk kuliah dan program, "Gambar" untuk poster, "Kematian" untuk berita khairat.</p>';
+    cfg.slides.forEach(function(s,i){
+      var b = 'slides.' + i + '.';
+      h += '<div class="item">' + head('Slaid ' + (i+1),'slides',i) +
+        select(b + 'type','Jenis',[['text','Teks'],['image','Gambar / poster'],['kematian','Berita kematian']]) +
+        text(b + 'label','Label kecil','cth. KULIAH MINGGU INI') + text(b + 'title','Tajuk') + text(b + 'subtitle','Baris kedua') + text(b + 'detail','Baris ketiga') +
+        (s.type === 'image' ? media(b + 'image','Gambar poster','image/*') : '') + check(b + 'active','Papar') + '</div>';
+    });
+    h += '<button data-act="add" data-list="slides">+ Tambah slaid</button>' + num('slideSeconds','Tukar slaid setiap (saat)') + '</section>';
+
+    h += '<section class="card"><h2>Ayat / hadis harian</h2><p class="muted">Satu dipaparkan setiap hari secara bergilir. Sila semak teks bersama pihak berautoriti agama.</p>';
+    cfg.verses.forEach(function(v,i){
+      var b = 'verses.' + i + '.';
+      h += '<div class="item">' + head(esc(v.ref || ('Ayat ' + (i+1))),'verses',i) + area(b + 'ar','Teks Arab','ar') + area(b + 'ms','Terjemahan') + text(b + 'ref','Rujukan') + check(b + 'active','Papar') + '</div>';
+    });
+    h += '<button data-act="add" data-list="verses">+ Tambah ayat / hadis</button></section>';
+
+    h += '<section class="card"><h2>Bunyi</h2>' + check('beep','Bunyi beep pada waktu azan dan iqamah') +
+      media('azanAudio','Fail audio azan (MP3) — jika ada, dimainkan pada waktu azan','audio/*') +
+      '<button data-act="test">Uji bunyi di TV</button></section>';
+
+    h += '<section class="card"><h2>Skrin rehat waktu malam</h2>' + check('rest.enabled','Hitamkan skrin pada waktu malam') +
+      '<div class="row">' + time('rest.start','Mula') + time('rest.end','Tamat') + '</div></section>';
+
+    h += '<section class="card"><h2>Lain-lain</h2>' + check('jawi','Papar nama waktu dalam Jawi') + check('puasaReminder','Peringatan puasa sunat automatik') + '</section>';
+
+    $('app').innerHTML = h;
+  }
+
+  // ---------- peristiwa
+  $('app').addEventListener('input', function(e){
+    var el = e.target, p = el.getAttribute('data-path');
+    if (el.name === 'mode') { mode = el.value; return; }
+    if (!p) return;
+    var t = el.getAttribute('data-type');
+    var v = t === 'bool' ? el.checked : t === 'num' ? (el.value === '' ? 0 : Number(el.value)) : el.value;
+    setPath(p, v);
+    if (p === 'name') $('title').textContent = v;
+    $('toast').textContent = 'Ada perubahan belum disimpan.';
+  });
+  $('app').addEventListener('change', function(e){
+    var el = e.target;
+    if (el.name === 'mode') { mode = el.value; $('toast').textContent = 'Ada perubahan belum disimpan.'; }
+    if (el.tagName === 'SELECT' && /\.type$/.test(el.getAttribute('data-path') || '')) render();
+  });
+
+  $('app').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if (!b) return;
+    var act = b.getAttribute('data-act'), list = b.getAttribute('data-list'), i = Number(b.getAttribute('data-i'));
+    if (act === 'add') {
+      var blank = { announcements: {text:'', active:true}, slides: {type:'text', label:'', title:'', subtitle:'', detail:'', image:null, active:true}, verses: {ar:'', ms:'', ref:'', active:true} }[list];
+      cfg[list].push(blank); render();
+    } else if (act === 'del') {
+      if (confirm('Padam item ini?')) { cfg[list].splice(i,1); render(); }
+    } else if (act === 'up') {
+      if (i > 0) { var x = cfg[list][i]; cfg[list][i] = cfg[list][i-1]; cfg[list][i-1] = x; render(); }
+    } else if (act === 'clear') {
+      setPath(b.getAttribute('data-path'), null); render();
+    } else if (act === 'upload') {
+      var inp = document.createElement('input'); inp.type = 'file'; inp.accept = b.getAttribute('data-accept');
+      var target = b.getAttribute('data-path');
+      inp.onchange = function(){
+        var f = inp.files[0]; if (!f) return;
+        $('toast').textContent = 'Memuat naik ' + f.name + '…';
+        api('/api/media', {method:'POST', headers:{'X-Filename': encodeURIComponent(f.name)}, body:f}).then(function(j){
+          setPath(target, j.name); render(); $('toast').textContent = 'Fail dimuat naik. Tekan Simpan untuk hantar ke TV.';
+        }).catch(function(err){ $('toast').textContent = 'Gagal muat naik: ' + err.message; });
+      };
+      inp.click();
+    } else if (act === 'test') {
+      api('/api/test-sound', {method:'POST'}).then(function(){ $('toast').textContent = 'Bunyi dimainkan di TV.'; }).catch(function(err){ $('toast').textContent = err.message; });
+    }
+  });
+
+  $('saveBtn').onclick = function(){
+    $('toast').textContent = 'Menyimpan…';
+    api('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({config: cfg, mode: mode})})
+      .then(function(){ $('toast').textContent = 'Disimpan. TV dikemas kini.'; })
+      .catch(function(err){ if (err.message !== '401') $('toast').textContent = 'Gagal simpan: ' + err.message; });
+  };
+
+  if (pin) load(); else showLogin('');
+})();
+</script>
+</body>
+</html>
